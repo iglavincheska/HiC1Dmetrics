@@ -1,10 +1,17 @@
 ### DOESN'T LIKE "+" or other symbols in .hic file names
 juicer=$1 #juicertools path
-hic=$2 #.hic file
+matrix=$2 #.hic file
 chr=$3 #number (1,2,3....)
 res=$4 #resolution
 gt=$5 #genome_table
-outname=$6
+name=$6
+outname="${name}_chr${chr}_IF"
+hic="${name}_KR.hic"
+
+#IG: step0 create KR normalized .hic from .cool matrix dump (skip if input is .hic)
+java -Xms512m -Xmx20480m -jar $juicer pre \
+    -r $res -k KR \
+    $matrix $hic $gt
 
 #step1 dump interaction from .hic
 java -Xms512m -Xmx20480m -jar $juicer dump observed KR $hic $chr $chr BP $res dump.temp.txt
