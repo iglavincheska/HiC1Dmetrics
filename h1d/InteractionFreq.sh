@@ -7,7 +7,7 @@ gt=$5 #genome_table
 outname=$6
 
 #step1 dump interaction from .hic
-java -Xms512m -Xmx20480m -jar $juicer dump observed none $hic $chr $chr BP $res dump.temp.txt
+java -Xms512m -Xmx20480m -jar $juicer dump observed KR $hic $chr $chr BP $res dump.temp.txt
 head dump.temp.txt
 #step2 convert hic dump file to fit-Hi-C input
 cat dump.temp.txt | sed 's/NaN/0/g'| \
