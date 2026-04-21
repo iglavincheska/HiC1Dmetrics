@@ -25,6 +25,7 @@ mkdir -p $outname/${binsize}
 
 outdir=$outname/${binsize}/${chr}.matrix.gz
 
-$pwd/convert_JuicerDump_to_dense.py sparse.temp $outdir $gt $chr $binsize
+py_exec=${H1D_PYTHON:-python3}
+"$py_exec" "$pwd/convert_JuicerDump_to_dense.py" sparse.temp "$outdir" "$gt" "$chr" "$binsize"
 
 rm sparse.temp

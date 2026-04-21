@@ -4,6 +4,29 @@ import numpy as np
 import pandas as pd
 import sys
 
+
+def resolve_chr_length(genometable, chrom):
+    """Resolve chromosome length for both '4' and 'chr4' style genome tables."""
+    candidates = [chrom]
+    if str(chrom).startswith("chr"):
+        candidates.append(str(chrom).replace("chr", "", 1))
+    else:
+        candidates.append("chr" + str(chrom))
+
+    for key in candidates:
+        if key in genometable.index:
+            value = genometable.loc[key, 1]
+            # If duplicated chromosome labels exist, pick the first row.
+            if hasattr(value, "iloc"):
+                value = value.iloc[0]
+            return int(value)
+
+    raise KeyError(
+        "Chromosome '{}' not found in genome table. Tried: {}".format(
+            chrom, ", ".join(candidates)
+        )
+    )
+
 def parse_argv():
     usage = 'Usage: \n    python {} <inputfile> <outputfile> <genometable> <chr> <resolution> [--help]'.format(__file__)
     arguments = sys.argv
@@ -32,8 +55,8 @@ if __name__ == '__main__':
     resolution = int(arguments[4])
 
     genometable = pd.read_csv(gtfile, delimiter='\t', index_col=[0], header=None)
-    chrlen = genometable.loc[chr]
-    binlen = int(chrlen/resolution) +1
+    chrlen = resolve_chr_length(genometable, chr)
+    binlen = int(chrlen / resolution) + 1
 
     arr = np.zeros((binlen, binlen))
     #    d = pd.read_csv(inputfile, delimiter='\t', header=None, index_col=[0,1])

@@ -1,4 +1,5 @@
 import argparse
+import pandas as pd
 from .MultiTypeScore import *
 from .plotMetrics import *
 from .plotTwoSample import *
@@ -98,18 +99,49 @@ def CLI():
     #=============================================================================
     def func_one(args):
         if not os.path.exists(args.data):print("File does not exist");exit(1)
+        
+        # IG: Auto-convert .cool/.mcool to .hic for IF calculation
+        if args.type == "IF" and (args.data.endswith('.cool') or args.data.endswith('.mcool')):
+            from .loadfile import cool2hic
+            print("Detected .cool file for IF calculation, converting to .hic...")
+            if not args.gt:
+                print("Error: genome_table (-gt) is required for .cool to .hic conversion"); exit(1)
+            args.data = cool2hic(args.data, args.resolution, args.gt, args.juicertool)
+            args.datatype = "rawhic"
+            print(f"Conversion complete. Using .hic file: {args.data}")
+        
         args.matrix = args.data
+        if args.parameter and args.type not in ["PC1","IF"]:
+            args.parameter = int(args.parameter)
+
         if args.chromosome == "all":
             if not args.maxchr: print("Please sepcify the maximum chromosome"); exit(1)
             if not os.path.exists(args.data):
                 print("path not exist"); exit(1)
-            scoreAll =oneScoreAllchr(args.data,args.resolution,args.type,args.parameter,
-                                    maxchr=args.maxchr,prefix=args.prefix,num=args.nProcesser,juicer=args.juicertool)
-            scoreAll.to_csv(args.outname+"_"+args.type+"_allchr.csv",sep="\t",index=False)
-            exit(0)
+            if args.datatype == "matrix":
+                scoreAll = oneScoreAllchr(args.data,args.resolution,args.type,args.parameter,
+                                          maxchr=args.maxchr,prefix=args.prefix,num=args.nProcesser,juicer=args.juicertool)
+            else:
+                # For rawhic/cool input, compute each chromosome from the same source file.
+                if not args.gt:
+                    print("Error: --gt is required when chromosome=all and datatype is not matrix"); exit(1)
+                gt_df = pd.read_csv(args.gt, sep="\t", header=None, dtype={0: str})
+                chrom_list = [str(c) for c in gt_df.iloc[:, 0].tolist()
+                              if str(c).lower() not in ["mt", "m", "chrm", "chrmt"]]
+                chrom_list = chrom_list[:args.maxchr]
+                if len(chrom_list) == 0:
+                    print("Error: no chromosomes found in genome table"); exit(1)
 
-        if args.parameter and args.type not in ["PC1","IF"]:
-            args.parameter = int(args.parameter)
+                all_scores = []
+                for chrom in chrom_list:
+                    score = multiScore(args.matrix,args.resolution,chrom,juicer=args.juicertool
+                                       ).obtainOneScore(args.type,parameter=args.parameter,datatype=args.datatype,
+                                                        gt=args.gt,TADfile=args.TADfile,msi=args.msi)
+                    all_scores.append(score)
+                scoreAll = pd.concat(all_scores, axis=0, ignore_index=True)
+            scoreAll.to_csv(args.outname+"_"+args.type+"_allchr.csv",sep="\t",index=False)
+            scoreAll.to_csv(args.outname+"_"+args.type+"_allchr.bedGraph",sep="\t",header=False,index=False)
+            exit(0)
 
         score = multiScore(args.matrix,args.resolution,args.chromosome,juicer=args.juicertool
                             ).obtainOneScore(args.type,parameter=args.parameter,datatype=args.datatype,

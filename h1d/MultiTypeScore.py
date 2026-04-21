@@ -63,8 +63,10 @@ class multiScore:
             if not gt:
                 raise ValueError("Genometable is required for the calculation of IF")
             codepath = os.path.dirname(os.path.realpath(__file__))
-            juicer = codepath+"/jc/jctool_1.11.04.jar"
-            chrnum = self.chr.split("chr")[1]
+            juicer = self.juicer if self.juicer else codepath+"/jc/jctool_1.11.04.jar"
+            chrnum = str(self.chr)
+            if chrnum.startswith("chr"):
+                chrnum = chrnum[3:]
 
             if msi == 'hiccups':
                 soft = codepath+"/extract/hiccup.sh"

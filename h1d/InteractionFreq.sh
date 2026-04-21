@@ -5,17 +5,36 @@ chr=$3 #number (1,2,3....)
 res=$4 #resolution
 gt=$5 #genome_table
 name=$6
-outname="${name}_chr${chr}_IF"
+outname="$name"
 hic="${name}_KR.hic"
 
-#IG: step0 create KR normalized .hic from .cool matrix dump (skip if input is .hic)
-java -Xms512m -Xmx20480m -jar $juicer pre \
-    -r $res -k KR \
-    $matrix $hic $gt
+# If input is already a .hic file, use it directly.
+if [[ "$matrix" == *.hic ]]; then
+    hic="$matrix"
+else
+    # Build .hic from matrix dump. Prefer KR if supported by this Juicer version.
+    java -Xms512m -Xmx20480m -jar "$juicer" pre \
+        -r "$res" -k KR \
+        "$matrix" "$hic" "$gt"
+
+    if [ $? -ne 0 ]; then
+        java -Xms512m -Xmx20480m -jar "$juicer" pre \
+            -r "$res" \
+            "$matrix" "$hic" "$gt"
+    fi
+fi
+
+if [ ! -f "$hic" ]; then
+    echo "Error: hic file not found: $hic"
+    exit 1
+fi
 
 #step1 dump interaction from .hic
-java -Xms512m -Xmx20480m -jar $juicer dump observed KR $hic $chr $chr BP $res dump.temp.txt
-head dump.temp.txt
+java -Xms512m -Xmx20480m -jar "$juicer" dump observed KR "$hic" "$chr" "$chr" BP "$res" dump.temp.txt
+if [ ! -s dump.temp.txt ]; then
+    echo "Error: failed to dump interactions from $hic"
+    exit 1
+fi
 #step2 convert hic dump file to fit-Hi-C input
 cat dump.temp.txt | sed 's/NaN/0/g'| \
     awk -v chr1=$chr -v chr2=$chr '{ printf "%s\t%s\t%s\t%s\t%s\n", chr1,$1,chr2,$2,$3}' |\
@@ -46,9 +65,9 @@ zcat < FitHiC.spline_pass1.res$res.significances.txt.gz|awk '$7<0.05{print $0}'|
 awk '{print "'$chromosome'""\t"$1"\t"$1+"'$res'"}' Anchor.txt > Anchor.bed
 bedtools coverage -a genome.split -b Anchor.bed|cut -f 1-4 > $outname.bedGraph
 
-#rm dump.temp.txt start end fragment.temp.gz fithic.temp.gz
-#rm FitHiC.fithic* FitHiC.spline_pass1.*.significances.txt.gz
-#rm end2 genome.split Anchor.bed Anchor.txt
+rm dump.temp.txt start end fragment.temp.gz fithic.temp.gz
+rm FitHiC.fithic* FitHiC.spline_pass1.*.significances.txt.gz
+rm end2 genome.split Anchor.bed Anchor.txt
 
 #sh InteractionFreq.sh /Users/wangjiankang/Documents/localrun/juicer_tools_1.19.02.jar  /Users/wangjiankang/Documents/localrun/MCF7_Ctrl.hic 21 50000 /Users/wangjiankang/Documents/localrun/genome_table outname
 
