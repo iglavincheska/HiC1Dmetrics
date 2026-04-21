@@ -7,6 +7,7 @@ from sklearn import preprocessing
 #from callDirectionalTAD import TADcallIS
 import warnings
 import os
+import subprocess
 
 class BasePara:
     def __init__(self,path,resolution,chromosome,out_name="noName",useNA=True,datatype="matrix"):
@@ -44,22 +45,45 @@ class BasePara:
         df.to_csv(self.out_name + ".bedGraph", sep="\t", header=False, index=False)
 
 class InteractionFrequency:
-    def __init__(self,path,resolution,chromosome,gt=None,datatype="rawhic",normIF=True,out_name="noName"):
+    def __init__(self,path,resolution,chromosome,gt=None,datatype="rawhic",normIF=True,out_name="noName",juicer=None):
         if not gt:
             raise ValueError("Genometable is required for the calculation of IF")
         codepath = os.path.dirname(os.path.realpath(__file__))
         soft = codepath+"/InteractionFreq.sh"
-        juicer = codepath+"/jc/jctool_1.11.04.jar"
-        chrnum = chromosome.split("chr")[1]
-        os.system("sh '"+soft+"' '"+juicer+"' "+path+" "+chrnum+" "+str(resolution)+" "+gt+" "+"IF_"+chromosome+"> info.txt") #in case of space
-        score = pd.read_csv("IF_"+chromosome+".bedGraph",sep="\t",header=None)
+        juicer = juicer if juicer else codepath+"/jc/jctool_1.11.04.jar"
+        chromosome = str(chromosome)
+        chrnum = chromosome
+        # Resolve chromosome label against genome table so names like 1/chr1/scaffold work.
+        try:
+            gt_df = pd.read_csv(gt, sep="\t", header=None, dtype={0: str})
+            gt_names = set(gt_df.iloc[:, 0].astype(str).tolist())
+            if chromosome in gt_names:
+                chrnum = chromosome
+            elif chromosome.lower().startswith("chr") and chromosome[3:] in gt_names:
+                chrnum = chromosome[3:]
+            elif (not chromosome.lower().startswith("chr")) and ("chr" + chromosome) in gt_names:
+                chrnum = "chr" + chromosome
+        except Exception:
+            # Keep original label if genome table parsing fails; downstream error will be clearer.
+            chrnum = chromosome
+        out_bg = "IF_"+chromosome+".bedGraph"
+        cmd = "sh '{}' '{}' '{}' '{}' '{}' '{}' '{}' > info.txt".format(
+            soft, juicer, path, chrnum, str(resolution), gt, "IF_"+chromosome
+        )
+        ret = subprocess.call(cmd, shell=True)
+        if ret != 0 or (not os.path.exists(out_bg)):
+            raise RuntimeError(
+                "InteractionFrequency failed. Check input .hic path and Juicer logs in info.txt. "
+                "Expected output not found: {}".format(out_bg)
+            )
+        score = pd.read_csv(out_bg,sep="\t",header=None)
         if normIF:
             beforlog = score[3].copy()
             afterlog = np.log1p(beforlog)
             score[3] = afterlog / np.mean(afterlog[afterlog>0])
         score.index = range(score.shape[0])
         score.columns = ["chr","start","end","InteractionFreq"]
-        os.system("rm "+"IF_"+chromosome+".bedGraph")
+        os.system("rm "+out_bg)
         self.score = score
 
     def getIF(self):

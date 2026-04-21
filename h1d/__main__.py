@@ -425,11 +425,31 @@ def CLI():
             stripe.to_csv(args.outname + "_stripes.csv", sep="\t", header=True, index=False)
         elif args.mode == "hubs":
             if args.datatype != "rawhic": print("Error: hubs requires rawhic datatype"); exit(1)
-            IF = InteractionFrequency(path,args.resolution,args.chromosome,gt=args.gt).getIF()
-            thresh = np.percentile(IF.iloc[:,3],90)
-            hubregion = IF[IF.iloc[:,3]>thresh]
+            if args.chromosome == "all":
+                if not args.gt:
+                    print("Error: hubs with chromosome=all requires genome table (--gt)"); exit(1)
+                gt_df = pd.read_csv(args.gt, sep="\t", header=None, dtype={0: str})
+                chrom_list = [str(c) for c in gt_df.iloc[:, 0].tolist()
+                              if str(c).lower() not in ["mt", "m", "chrm", "chrmt"]]
+                if len(chrom_list) == 0:
+                    print("Error: no chromosomes found in genome table"); exit(1)
+
+                if_list = []
+                for chrom in chrom_list:
+                    score = InteractionFrequency(path,args.resolution,chrom,gt=args.gt,juicer=args.juicertool).getIF()
+                    if_list.append(score)
+                IF = pd.concat(if_list, axis=0, ignore_index=True)
+
+                # Call hubs per chromosome to avoid large-chromosome bias.
+                thresh = IF.groupby("chr").InteractionFreq.transform(lambda s: np.nanpercentile(s, 90))
+                hubregion = IF[IF.InteractionFreq > thresh]
+            else:
+                IF = InteractionFrequency(path,args.resolution,args.chromosome,gt=args.gt,juicer=args.juicertool).getIF()
+                thresh = np.percentile(IF.iloc[:,3],90)
+                hubregion = IF[IF.iloc[:,3]>thresh]
+
             hubregion.to_csv(args.outname + "_hubs_IF.csv", sep="\t", header=True, index=False)
-            os.system("sed '1d' " + args.outname + "_hubs_IF.csv" + " |bedtools merge -i stdin > "+ args.outname + "_hubs.csv")
+            os.system("sed '1d' " + args.outname + "_hubs_IF.csv" + " | sort -k1,1 -k2,2n | bedtools merge -i stdin > "+ args.outname + "_hubs.csv")
         else:
             print("unsupported model");exit(1)
 
