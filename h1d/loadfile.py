@@ -187,7 +187,13 @@ def cool2hic(path, res, gt, juicer=None):
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     
     if result.returncode != 0:
-        print("Error converting to .hic:", result.stderr)
+        stderr = (result.stderr or "").strip()
+        if "Unknown option '-k'" in stderr:
+            print("Error converting to .hic: this Juicer version does not support '-k KR' for 'pre'.")
+            print("Please use a KR-capable juicer_tools jar (for example juicer_tools.2.20.00.jar).")
+            print("Without '-k KR', output may not be KR-normalized.")
+            exit(1)
+        print("Error converting to .hic:", stderr)
         exit(1)
     
     # Clean up temporary matrix file

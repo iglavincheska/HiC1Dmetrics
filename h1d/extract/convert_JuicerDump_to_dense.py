@@ -5,25 +5,40 @@ import pandas as pd
 import sys
 
 
-def resolve_chr_length(genometable, chrom):
-    """Resolve chromosome length for both '4' and 'chr4' style genome tables."""
-    candidates = [chrom]
-    if str(chrom).startswith("chr"):
-        candidates.append(str(chrom).replace("chr", "", 1))
-    else:
-        candidates.append("chr" + str(chrom))
+def _norm_chr(value):
+    text = str(value).strip()
+    return text.lower().replace("chr", "", 1) if text.lower().startswith("chr") else text.lower()
 
+
+def resolve_chr_length(genometable, chrom):
+    """Resolve chromosome length with robust matching for varied chromosome naming."""
+    chrom_text = str(chrom).strip()
+    candidates = [chrom_text]
+    if chrom_text.lower().startswith("chr"):
+        candidates.append(chrom_text[3:])
+    else:
+        candidates.append("chr" + chrom_text)
+
+    # 1) Exact string match first.
     for key in candidates:
         if key in genometable.index:
             value = genometable.loc[key, 1]
-            # If duplicated chromosome labels exist, pick the first row.
             if hasattr(value, "iloc"):
                 value = value.iloc[0]
-            return int(value)
+            return int(float(value))
+
+    # 2) Case-insensitive + optional 'chr' prefix normalization.
+    norm_target = _norm_chr(chrom_text)
+    for idx_value in genometable.index:
+        if _norm_chr(idx_value) == norm_target:
+            value = genometable.loc[idx_value, 1]
+            if hasattr(value, "iloc"):
+                value = value.iloc[0]
+            return int(float(value))
 
     raise KeyError(
         "Chromosome '{}' not found in genome table. Tried: {}".format(
-            chrom, ", ".join(candidates)
+            chrom_text, ", ".join(candidates)
         )
     )
 
@@ -54,7 +69,7 @@ if __name__ == '__main__':
     chr = arguments[3]
     resolution = int(arguments[4])
 
-    genometable = pd.read_csv(gtfile, delimiter='\t', index_col=[0], header=None)
+    genometable = pd.read_csv(gtfile, delimiter='\t', index_col=[0], header=None, dtype={0: str})
     chrlen = resolve_chr_length(genometable, chr)
     binlen = int(chrlen / resolution) + 1
 

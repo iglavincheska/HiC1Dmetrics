@@ -243,7 +243,14 @@ def CLI():
         if not args.controlmatrix:
             if not set(typelist).issubset(["IS","CI","DI","SS","DLR","PC1","IES","IAS","IF"]):
                 print("Error: not supported"); exit(1)
-            if "IF" in typelist and args.datatype != "rawhic": print("Error: IF required rawhic datatype"); exit(1)
+            if "IF" in typelist and args.datatype == "matrix":
+                print("Error: IF required rawhic or cool datatype"); exit(1)
+            if "IF" in typelist and args.datatype == "cool":
+                if not args.gt:
+                    print("Error: genome_table is required for cool to hic conversion"); exit(1)
+                print("Detected IF in multitypes with cool input, converting to .hic...")
+                args.matrix = cool2hic(args.matrix, args.resolution, args.gt, args.juicertool)
+                args.datatype = "rawhic"
             ms = multiScore(args.matrix,args.resolution,args.chromosome,juicer=args.juicertool)
             if not args.draw:
                 score = ms.allOneScore(typelist,parameterlist,datatype=args.datatype,gt=args.gt)
@@ -254,7 +261,14 @@ def CLI():
         elif args.controlmatrix:
             if not set(typelist).issubset(["ISC","CIC","SSC","deltaDLR","CD","IESC","IASC","IFC","DRF"]):
                 print("Error: not supported"); exit(1)
-            if "IFC" in typelist and args.datatype == "matrix": print("Error: IFC required rawhic datatype"); exit(1)
+            if "IFC" in typelist and args.datatype == "matrix": print("Error: IFC required rawhic or cool datatype"); exit(1)
+            if "IFC" in typelist and args.datatype == "cool":
+                if not args.gt:
+                    print("Error: genome_table is required for cool to hic conversion"); exit(1)
+                print("Detected IFC in multitypes with cool input, converting treated/control to .hic...")
+                args.matrix = cool2hic(args.matrix, args.resolution, args.gt, args.juicertool)
+                args.controlmatrix = cool2hic(args.controlmatrix, args.resolution, args.gt, args.juicertool)
+                args.datatype = "rawhic"
             if "DRF" in typelist:
                 DRFpos = typelist.index("DRF")
                 parameterlist[DRFpos] = parameterlist[DRFpos].split("-")
@@ -432,6 +446,183 @@ def CLI():
     parser_call.add_argument("-p","--parameter",type=str,help="Parameter for indicated mode",default=None)
     parser_call.add_argument('--juicertool',type=str,help="Specify juicertool with different version.",default=None)
     parser_call.set_defaults(func=func_call)
+
+    #Function 7
+    #=============================================================================
+    def _split_csv_field(value):
+        if value is None:
+            return []
+        text = str(value).strip()
+        if text == "" or text.lower() == "nan":
+            return []
+        return [x.strip() for x in text.split(",") if x.strip()]
+
+    def _to_int_or_none(value):
+        if value is None:
+            return None
+        text = str(value).strip()
+        if text == "" or text.lower() == "nan":
+            return None
+        return int(float(text))
+
+    def _resolve_juicer_path(juicer_tool_value, juicer_dir_value):
+        tool = (juicer_tool_value or "").strip() if juicer_tool_value else ""
+        if tool:
+            return tool
+
+        jdir = (juicer_dir_value or "").strip() if juicer_dir_value else ""
+        if not jdir:
+            return None
+
+        if os.path.isfile(jdir):
+            return jdir
+
+        if not os.path.isdir(jdir):
+            print("Error: juicerdir is not a directory or jar file -> " + jdir)
+            exit(1)
+
+        preferred = [
+            os.path.join(jdir, "juicer_tools.2.20.00.jar"),
+            os.path.join(jdir, "jctool_1.11.04.jar"),
+        ]
+        for p in preferred:
+            if os.path.exists(p):
+                return p
+
+        jars = [f for f in os.listdir(jdir) if f.endswith(".jar")]
+        if len(jars) > 0:
+            return os.path.join(jdir, jars[0])
+
+        print("Error: no Juicer jar found in juicerdir -> " + jdir)
+        exit(1)
+
+    def func_batch(args):
+        if not os.path.exists(args.config):
+            print("File does not exist"); exit(1)
+
+        table = pd.read_csv(args.config, sep="\t", dtype=str).fillna("")
+        if table.shape[0] == 0:
+            print("Error: empty batch file"); exit(1)
+
+        required = ["data", "resolution"]
+        for col in required:
+            if col not in table.columns:
+                print("Error: batch file is missing required column: " + col)
+                exit(1)
+
+        for idx, row in table.iterrows():
+            data = row.get("data", "").strip()
+            if data == "" or not os.path.exists(data):
+                print(f"Error (row {idx+1}): invalid data path -> {data}")
+                exit(1)
+
+            res = _to_int_or_none(row.get("resolution", ""))
+            if res is None:
+                print(f"Error (row {idx+1}): invalid resolution")
+                exit(1)
+
+            dtype = row.get("datatype", "").strip() or args.datatype
+            gt = row.get("gt", "").strip() or args.gt
+            juicer = _resolve_juicer_path(
+                row.get("juicertool", "").strip() or args.juicertool,
+                row.get("juicerdir", "").strip() or row.get("juicer_dir", "").strip() or args.juicerdir,
+            )
+            tadfile = row.get("TADfile", "").strip() or row.get("tadfile", "").strip()
+            genedensity = row.get("genedensity", "").strip() or row.get("geneDensity", "").strip()
+            msi = row.get("msi", "").strip() or args.msi
+
+            type_field = row.get("type", "").strip() or row.get("types", "").strip() or row.get("track", "").strip()
+            if type_field == "":
+                print(f"Error (row {idx+1}): missing type/types column value")
+                exit(1)
+            typelist = _split_csv_field(type_field)
+
+            param_field = row.get("parameter", "").strip() or row.get("parameters", "").strip()
+            params = _split_csv_field(param_field)
+
+            chrom_field = row.get("chromosome", "").strip()
+            maxchr = _to_int_or_none(row.get("maxchr", ""))
+            if maxchr is None:
+                maxchr = args.maxchr
+
+            outprefix = row.get("outname", "").strip() or row.get("outprefix", "").strip()
+            if outprefix == "":
+                outprefix = f"batch_row{idx+1}"
+
+            # Build chromosome list.
+            # If chromosome is empty or 'all', use chromosome names from genome table to preserve naming convention.
+            if chrom_field == "" or chrom_field.lower() == "all":
+                if not gt:
+                    print(f"Error (row {idx+1}): chromosome is empty/all but no genome table (gt) was provided")
+                    exit(1)
+                gt_df = pd.read_csv(gt, sep="\t", header=None, dtype={0: str})
+                chrom_list = [str(c) for c in gt_df.iloc[:, 0].tolist()
+                              if str(c).lower() not in ["mt", "m", "chrm", "chrmt"]]
+                if maxchr:
+                    chrom_list = chrom_list[:maxchr]
+            else:
+                chrom_list = _split_csv_field(chrom_field)
+                if len(chrom_list) == 0:
+                    chrom_list = [chrom_field]
+
+            for t_i, mode in enumerate(typelist):
+                mode_param = params[t_i] if t_i < len(params) else ""
+                if mode == "PC1" and mode_param == "" and genedensity:
+                    mode_param = genedensity
+
+                print(f"[batch] row {idx+1}: start metric {mode}")
+
+                calc_dtype = dtype
+                calc_data = data
+
+                # Auto-convert cool to hic for IF in batch mode.
+                if mode == "IF" and calc_dtype == "cool":
+                    if not gt:
+                        print(f"Error (row {idx+1}): IF with cool input requires gt")
+                        exit(1)
+                    calc_data = cool2hic(calc_data, res, gt, juicer)
+                    calc_dtype = "rawhic"
+
+                all_scores = []
+                for chrom in chrom_list:
+                    parameter = mode_param if mode_param != "" else None
+                    if parameter and mode not in ["PC1", "IF"]:
+                        parameter = int(parameter)
+
+                    score = multiScore(calc_data, res, chrom, juicer=juicer).obtainOneScore(
+                        mode,
+                        parameter=parameter,
+                        datatype=calc_dtype,
+                        gt=gt,
+                        TADfile=tadfile if tadfile else None,
+                        msi=msi,
+                    )
+                    all_scores.append(score)
+
+                if len(all_scores) == 1:
+                    out_df = all_scores[0]
+                    out_path = f"{outprefix}_{mode}.bedGraph"
+                    out_df.to_csv(out_path, sep="\t", header=False, index=False)
+                    print(f"[batch] row {idx+1}: finished metric {mode} -> {out_path}")
+                else:
+                    out_df = pd.concat(all_scores, axis=0, ignore_index=True)
+                    out_csv = f"{outprefix}_{mode}_allchr.csv"
+                    out_bg = f"{outprefix}_{mode}_allchr.bedGraph"
+                    out_df.to_csv(out_csv, sep="\t", index=False)
+                    out_df.to_csv(out_bg, sep="\t", header=False, index=False)
+                    print(f"[batch] row {idx+1}: finished metric {mode} -> {out_bg}")
+
+            print(f"Finished batch row {idx+1}")
+
+    parser_batch = subparsers.add_parser("batch", help="Run batch one-sample jobs from a TSV config file")
+    parser_batch.add_argument("config", type=str, help="Tab-separated batch config file")
+    parser_batch.add_argument("--datatype", type=str, help="Default datatype when missing in rows", default="matrix")
+    parser_batch.add_argument("--gt", type=str, help="Default genome table when missing in rows", default="")
+    parser_batch.add_argument("--juicertool", type=str, help="Default juicer tools jar when missing in rows", default=None)
+    parser_batch.add_argument("--juicerdir", type=str, help="Default Juicer directory (or jar path) when missing in rows", default=None)
+    parser_batch.add_argument("--msi", type=str, help="Default IF method [fithic2,hiccups]", default="fithic2")
+    parser_batch.add_argument("--maxchr", type=int, help="Optional limit for chromosomes taken from genome table", default=None)
+    parser_batch.set_defaults(func=func_batch)
 
     parser.add_argument("-V","--version",help="Show h1d version",action='store_true',default=False)
     args = parser.parse_args()
