@@ -389,7 +389,7 @@ def CLI():
     def func_call(args):
         if not os.path.exists(args.data):print("File does not exist");exit(1)
         args.matrix = args.data
-        if args.datatype in ["rawhic",'cool'] and args.mode != "hubs":
+        if args.datatype in ["rawhic",'cool'] and args.mode not in ["hubs", "IFregions"]:
             if args.datatype == "rawhic":
                 path = hic2matrix(args.matrix,args.resolution,args.chromosome,args.gt,args.juicertool)
                 if args.controlmatrix: controlpath = hic2matrix(args.controlmatrix,args.resolution,args.chromosome,args.gt)
@@ -450,12 +450,65 @@ def CLI():
 
             hubregion.to_csv(args.outname + "_hubs_IF.csv", sep="\t", header=True, index=False)
             os.system("sed '1d' " + args.outname + "_hubs_IF.csv" + " | sort -k1,1 -k2,2n | bedtools merge -i stdin > "+ args.outname + "_hubs.csv")
+        elif args.mode == "IFregions":
+            # Read normalized IF bedGraph and extract high-IF regions.
+            if not os.path.exists(args.data):
+                print("File does not exist"); exit(1)
+
+            threshold = float(args.parameter) if args.parameter else 1.5
+            merge_gap = max(0, int(args.resolution) - 1)
+
+            score = pd.read_csv(args.data, sep="\t", header=None, comment="#", dtype={0: str})
+            if score.shape[1] < 4:
+                print("Error: IFregions expects at least 4 columns: chr,start,end,IFscore"); exit(1)
+
+            score = score.iloc[:, :4].copy()
+            score.columns = ["chr", "start", "end", "IF"]
+            score["chr"] = score["chr"].astype(str)
+            score["start"] = pd.to_numeric(score["start"], errors="coerce")
+            score["end"] = pd.to_numeric(score["end"], errors="coerce")
+            score["IF"] = pd.to_numeric(score["IF"], errors="coerce")
+            score = score.dropna(subset=["start", "end", "IF"])
+
+            high = score[score["IF"] > threshold].copy()
+            high.to_csv(args.outname + "_IFregions_raw.bedGraph", sep="\t", header=False, index=False)
+
+            if high.shape[0] == 0:
+                pd.DataFrame(columns=["chr", "start", "end"]).to_csv(
+                    args.outname + "_IFregions_merged.bed", sep="\t", header=False, index=False
+                )
+            else:
+                high = high.sort_values(["chr", "start", "end"])
+                merged = []
+                cur_chr = None
+                cur_start = None
+                cur_end = None
+
+                for _, row in high.iterrows():
+                    r_chr = str(row["chr"])
+                    r_start = int(row["start"])
+                    r_end = int(row["end"])
+
+                    if cur_chr is None:
+                        cur_chr, cur_start, cur_end = r_chr, r_start, r_end
+                        continue
+
+                    if r_chr == cur_chr and (r_start - cur_end) <= merge_gap:
+                        cur_end = max(cur_end, r_end)
+                    else:
+                        merged.append([cur_chr, cur_start, cur_end])
+                        cur_chr, cur_start, cur_end = r_chr, r_start, r_end
+
+                merged.append([cur_chr, cur_start, cur_end])
+                pd.DataFrame(merged, columns=["chr", "start", "end"]).to_csv(
+                    args.outname + "_IFregions_merged.bed", sep="\t", header=False, index=False
+                )
         else:
             print("unsupported model");exit(1)
 
     parser_call = subparsers.add_parser("call",help="Extract secondary information from metrics (dTAD, stripeTAD, et.al)",
                                             description="Extract secondary information from metrics (dTAD, stripeTAD, et.al)")
-    parser_call.add_argument('mode', type=str, help='Running mode,,should be one of {dTAD,stripe,stripeTAD,TAD,hubs}')
+    parser_call.add_argument('mode', type=str, help='Running mode,,should be one of {dTAD,stripe,stripeTAD,TAD,hubs,IFregions}')
     parser_call.add_argument('data', type=str, help='Path of matrix file or raw .hic file')
     parser_call.add_argument('resolution', type=int,help="Resolution of input matrix")
     parser_call.add_argument("chromosome",type=str,help="Chromosome number.")
@@ -542,6 +595,14 @@ def CLI():
                 exit(1)
 
             dtype = row.get("datatype", "").strip() or args.datatype
+            ext = os.path.splitext(data)[1].lower()
+            # Be permissive for batch inputs: if path is .hic, treat it as rawhic even if datatype says cool.
+            if ext == ".hic" and dtype == "cool":
+                print(f"[batch] row {idx+1}: datatype=cool with .hic input detected, switching datatype to rawhic")
+                dtype = "rawhic"
+            if ext in [".cool", ".mcool"] and dtype == "rawhic":
+                print(f"[batch] row {idx+1}: datatype=rawhic with cool input detected, switching datatype to cool")
+                dtype = "cool"
             gt = row.get("gt", "").strip() or args.gt
             juicer = _resolve_juicer_path(
                 row.get("juicertool", "").strip() or args.juicertool,
@@ -600,8 +661,15 @@ def CLI():
                     if not gt:
                         print(f"Error (row {idx+1}): IF with cool input requires gt")
                         exit(1)
-                    calc_data = cool2hic(calc_data, res, gt, juicer)
-                    calc_dtype = "rawhic"
+                    in_ext = os.path.splitext(calc_data)[1].lower()
+                    if in_ext == ".hic":
+                        calc_dtype = "rawhic"
+                    elif in_ext in [".cool", ".mcool"]:
+                        calc_data = cool2hic(calc_data, res, gt, juicer)
+                        calc_dtype = "rawhic"
+                    else:
+                        print(f"Error (row {idx+1}): IF with datatype=cool requires .cool/.mcool/.hic input, got {calc_data}")
+                        exit(1)
 
                 all_scores = []
                 for chrom in chrom_list:

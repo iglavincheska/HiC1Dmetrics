@@ -136,7 +136,7 @@ def cool2hic(path, res, gt, juicer=None):
     if os.path.exists(temp_matrix):
         os.remove(temp_matrix)
     
-    sel = c.matrix(balance=False, as_pixels=True, join=True, sparse=True)
+    sel = c.matrix(balance=False, as_pixels=True, join=True, sparse=False)
     chroms = list(chrom.name)
     
     print("Converting cool matrix to juicer format...")
