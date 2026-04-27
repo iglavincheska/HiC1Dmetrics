@@ -1,0 +1,19 @@
+# Created by venv; see https://docs.python.org/3/library/venv.html
+*.txt
+*.bed
+*.gz
+*.fithic
+*.hic
+*.matrix.gz
+*python*
+*ctivate*
+*pip*
+*.pyc
+*.csv
+*.bedGraph
+*.temp.*
+*.tsv
+*.png
+
+#directories to ignore
+downstream_scripts/
